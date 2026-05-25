@@ -48,11 +48,12 @@ def main():
     host = sys.argv[1]
 
     print("==> 1/6  build x86_64 Linux binary")
-    if subprocess.run(["docker", "info"], capture_output=True).returncode != 0:
-        sys.exit("Docker is not running — start Docker Desktop and retry")
-    if subprocess.run(["which", "cross"], capture_output=True).returncode != 0:
-        sh(["cargo", "install", "cross"])
-    sh(["cross", "build", "--target", "x86_64-unknown-linux-gnu", "--release", "-p", "web"])
+    if subprocess.run(["which", "zig"], capture_output=True).returncode != 0:
+        sys.exit("zig not found — run: brew install zig")
+    if subprocess.run(["which", "cargo-zigbuild"], capture_output=True).returncode != 0:
+        sh(["cargo", "install", "cargo-zigbuild"])
+    sh(["rustup", "target", "add", "x86_64-unknown-linux-gnu"])
+    sh(["cargo", "zigbuild", "--target", "x86_64-unknown-linux-gnu.2.17", "--release", "-p", "web"])
 
     print("==> 2/6  upload binary")
     scp(host, "target/x86_64-unknown-linux-gnu/release/web", BINARY)
