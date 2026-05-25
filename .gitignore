@@ -1,5 +1,6 @@
 # Data
-data/
+corpus/
+indexer_out/
 one-shot/
 
 # Rust

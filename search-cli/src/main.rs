@@ -17,19 +17,16 @@ fn main() -> Result<()> {
 
     let idx = index_io::IndexIo::open(&cli.index)?.into_search_index();
 
-    if let Some(result) = idx.search(&cli.word) {
-        println!("Found word: {}", result.word);
-        println!("Postings count: {}", result.postings.len());
-        for posting in result.postings.iter().take(5) {
-            println!(
-                "  doc_id: {}, locations: {:?}",
-                posting.doc_id,
-                &posting.locations[..posting.locations.len().min(5)]
-            );
-        }
-    } else {
-        println!("Word '{}' not found", cli.word);
-    }
+    let postings = match idx.search(&cli.word) {
+        Some(result) => result
+            .postings
+            .iter()
+            .map(|p| serde_json::json!({"doc_id": p.doc_id, "locations": p.locations}))
+            .collect::<Vec<_>>(),
+        None => vec![],
+    };
+
+    println!("{}", serde_json::to_string(&postings)?);
 
     Ok(())
 }

@@ -1,27 +1,22 @@
-use crate::gutenberg::read_header;
+use crate::gutenberg::read_header_from_reader;
 use anyhow::Result;
 use std::collections::HashMap;
-use std::fs::File;
-use std::io::{BufReader, Read, Seek, SeekFrom};
-use std::path::Path;
+use std::io::{Cursor, Read};
 
-pub(crate) fn index(path: impl AsRef<Path>) -> Result<HashMap<String, Vec<usize>>> {
-    let path = path.as_ref();
+pub(crate) fn index(mut reader: impl Read) -> Result<Option<HashMap<String, Vec<usize>>>> {
+    let mut content = Vec::new();
+    reader.read_to_end(&mut content)?;
 
-    let header = read_header(
-        path.to_str()
-            .ok_or_else(|| anyhow::anyhow!("non-UTF-8 path: {:?}", path))?,
-    )?;
+    let header = read_header_from_reader(Cursor::new(&content))?;
 
-    let mut file = File::open(path)?;
-
-    if let Some(header_len) = header.header_len {
-        file.seek(SeekFrom::Start(header_len as u64))?;
+    if !header.encoding.contains("ASCII") {
+        return Ok(None);
     }
 
+    let start = header.header_len.unwrap_or(0);
     let mut result = HashMap::new();
-    index_internal(BufReader::new(file), &mut result)?;
-    Ok(result)
+    index_internal(Cursor::new(&content[start..]), &mut result)?;
+    Ok(Some(result))
 }
 
 fn index_internal<T: Read>(reader: T, result: &mut HashMap<String, Vec<usize>>) -> Result<()> {
@@ -31,9 +26,7 @@ fn index_internal<T: Read>(reader: T, result: &mut HashMap<String, Vec<usize>>) 
 
     let mut add_word_to_result = |word_bytes: &Vec<u8>, word_position| {
         let word_string = String::from_utf8(word_bytes.clone())?.to_lowercase();
-
         result.entry(word_string).or_default().push(word_position);
-
         Ok::<(), anyhow::Error>(())
     };
 
