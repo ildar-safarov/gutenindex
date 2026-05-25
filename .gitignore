@@ -1,0 +1,21 @@
+# Data
+data/
+one-shot/
+
+# Rust
+target/
+
+# Python
+__pycache__/
+.venv/
+*.py[cod]
+
+# Claude Code
+.claude/
+
+# Editors
+.idea/
+.vscode/
+
+# Mac OS
+.DS_Store
