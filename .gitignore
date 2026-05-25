@@ -1,6 +1,9 @@
 # Data
-corpus/
-indexer_out/
+corpus/zips
+index/[0-9]
+index/doclen
+index/meta
+index/vocab
 one-shot/
 
 # Rust
