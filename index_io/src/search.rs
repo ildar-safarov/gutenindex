@@ -105,6 +105,10 @@ impl SearchIndex {
         SearchResult { word, postings }
     }
 
+    pub fn doc_title(&self, doc_id: u32) -> Option<&str> {
+        self.index.doc_title(doc_id)
+    }
+
     pub fn iter_words(&self) -> impl Iterator<Item = String> + '_ {
         (0..self.index.word_count()).map(move |i| self.index.get_word(i))
     }

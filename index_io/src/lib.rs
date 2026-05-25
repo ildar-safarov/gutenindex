@@ -79,6 +79,7 @@ pub struct IndexIo {
     doc_count: u32,
     avg_doc_len: f32,
     doc_lengths: Vec<u32>,
+    titles: HashMap<u32, String>,
 }
 
 #[derive(Debug, Clone)]
@@ -133,12 +134,21 @@ impl IndexIo {
             .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
             .collect();
 
-        Ok(Self { vocab, chunks, word_count, doc_count, avg_doc_len, doc_lengths })
+        let titles: HashMap<u32, String> = {
+            let raw: HashMap<String, String> =
+                serde_json::from_str(&std::fs::read_to_string(base.with_extension("titles"))?)?;
+            raw.into_iter()
+                .filter_map(|(k, v)| Some((k.parse::<u32>().ok()?, v)))
+                .collect()
+        };
+
+        Ok(Self { vocab, chunks, word_count, doc_count, avg_doc_len, doc_lengths, titles })
     }
 
     pub fn write<P: AsRef<Path>>(
         global_index: &GlobalIndex,
         doc_lengths: &HashMap<usize, u32>,
+        titles: &HashMap<usize, String>,
         base: P,
     ) -> Result<()> {
         let base = base.as_ref();
@@ -241,6 +251,10 @@ impl IndexIo {
         dw.flush()?;
         doclen_file.sync_all()?;
 
+        let titles_map: HashMap<String, &String> =
+            titles.iter().map(|(id, t)| (id.to_string(), t)).collect();
+        serde_json::to_writer(File::create(base.with_extension("titles"))?, &titles_map)?;
+
         Ok(())
     }
 
@@ -281,6 +295,10 @@ impl IndexIo {
 
     pub(crate) fn doc_len(&self, doc_id: u32) -> u32 {
         self.doc_lengths.get(doc_id as usize).copied().unwrap_or(0)
+    }
+
+    pub fn doc_title(&self, doc_id: u32) -> Option<&str> {
+        self.titles.get(&doc_id).map(|s| s.as_str())
     }
 
     pub(crate) fn get_vocab_entry(&self, idx: usize) -> VocabEntry {

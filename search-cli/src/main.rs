@@ -13,6 +13,9 @@ struct Cli {
     /// BM25 query — returns JSON array of {doc_id, score} sorted by relevance
     #[arg(short, long)]
     query: Option<String>,
+    /// Return top N results with titles (used with --query, default 10)
+    #[arg(long, default_value_t = 10)]
+    top: usize,
 }
 
 fn main() -> Result<()> {
@@ -36,9 +39,13 @@ fn main() -> Result<()> {
             let results = idx.bm25_search(&terms);
             let json: Vec<_> = results
                 .iter()
-                .map(|r| serde_json::json!({"doc_id": r.doc_id, "score": r.score}))
+                .take(cli.top)
+                .map(|r| {
+                    let title = idx.doc_title(r.doc_id).unwrap_or("");
+                    serde_json::json!({"doc_id": r.doc_id, "score": r.score, "title": title})
+                })
                 .collect();
-            println!("{}", serde_json::to_string(&json)?);
+            println!("{}", serde_json::to_string_pretty(&json)?);
         }
         _ => {
             eprintln!("Provide either --word or --query");

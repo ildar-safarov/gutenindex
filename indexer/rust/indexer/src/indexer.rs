@@ -3,7 +3,7 @@ use anyhow::Result;
 use std::collections::HashMap;
 use std::io::{Cursor, Read};
 
-pub(crate) fn index(mut reader: impl Read) -> Result<Option<HashMap<String, Vec<usize>>>> {
+pub(crate) fn index(mut reader: impl Read) -> Result<Option<(HashMap<String, Vec<usize>>, String)>> {
     let mut content = Vec::new();
     reader.read_to_end(&mut content)?;
 
@@ -16,7 +16,7 @@ pub(crate) fn index(mut reader: impl Read) -> Result<Option<HashMap<String, Vec<
     let start = header.header_len.unwrap_or(0);
     let mut result = HashMap::new();
     index_internal(Cursor::new(&content[start..]), &mut result)?;
-    Ok(Some(result))
+    Ok(Some((result, header.title)))
 }
 
 fn index_internal<T: Read>(reader: T, result: &mut HashMap<String, Vec<usize>>) -> Result<()> {

@@ -27,6 +27,7 @@ pub fn index_files(
     let pb = ProgressBar::new(indexer_input.doc_ids.len() as u64);
     let mut global_index: GlobalIndex = GlobalIndex::new();
     let mut doc_lengths: HashMap<usize, u32> = HashMap::new();
+    let mut titles: HashMap<usize, String> = HashMap::new();
 
     let mut by_bucket: [Vec<usize>; 10] = Default::default();
     for doc_id in indexer_input.doc_ids {
@@ -42,12 +43,13 @@ pub fn index_files(
 
         for &doc_id in doc_ids {
             let mut entry = archive.by_name(&format!("{doc_id}.txt"))?;
-            let Some(doc_index) = indexer::index(&mut entry)? else {
+            let Some((doc_index, title)) = indexer::index(&mut entry)? else {
                 pb.inc(1);
                 continue;
             };
             let doc_len: u32 = doc_index.values().map(|v| v.len()).sum::<usize>() as u32;
             doc_lengths.insert(doc_id, doc_len);
+            titles.insert(doc_id, title);
             for (word, locations) in doc_index {
                 global_index
                     .entry(word)
@@ -60,6 +62,6 @@ pub fn index_files(
 
     pb.finish();
 
-    IndexIo::write(&global_index, &doc_lengths, output_db_path)?;
+    IndexIo::write(&global_index, &doc_lengths, &titles, output_db_path)?;
     Ok(())
 }
