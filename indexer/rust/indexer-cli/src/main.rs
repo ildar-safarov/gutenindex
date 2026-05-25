@@ -32,11 +32,11 @@ enum Commands {
 
 #[derive(Subcommand)]
 enum ToolsCommands {
-    /// Collect ASCII books from a library directory
+    /// Collect ASCII books from corpus ZIP archives
     CollectAscii {
-        /// Path to the library directory
+        /// Path to the corpus directory containing 0.zip … 9.zip
         #[arg(short, long)]
-        library_dir: String,
+        corpus_dir: String,
         /// Path to save the indexer input JSON file to
         #[arg(long)]
         save_indexer_input_json_to: String,
@@ -55,11 +55,11 @@ fn main() -> Result<()> {
         }
         Some(Commands::Tools { command }) => match command {
             ToolsCommands::CollectAscii {
-                library_dir,
+                corpus_dir,
                 save_indexer_input_json_to,
                 limit,
             } => {
-                collect_ascii_books(library_dir, save_indexer_input_json_to, *limit)?;
+                collect_ascii_books(corpus_dir, save_indexer_input_json_to, *limit)?;
             }
         },
         None => {

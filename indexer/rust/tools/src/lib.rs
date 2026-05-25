@@ -1,36 +1,57 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use indexer::gutenberg;
 use indexer::pipeline::IndexerInput;
 use indicatif::ProgressBar;
 use std::fs::File;
+use std::io::{Cursor, Read};
 use std::path::Path;
-use walkdir::WalkDir;
+use zip::ZipArchive;
 
 pub fn collect_ascii_books(
-    library_dir: impl AsRef<Path>,
+    corpus_dir: impl AsRef<Path>,
     save_indexer_input_json_to: impl AsRef<Path>,
     limit: Option<usize>,
 ) -> Result<()> {
-    let txt_files: Vec<_> = WalkDir::new(library_dir)
-        .into_iter()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_type().is_file() && e.path().extension().is_some_and(|ext| ext == "txt"))
-        .collect();
+    let corpus_dir = corpus_dir.as_ref();
 
+    let total: u64 = (0..10u8)
+        .filter_map(|b| File::open(corpus_dir.join(format!("{b}.zip"))).ok())
+        .filter_map(|f| ZipArchive::new(f).ok())
+        .map(|a| a.len() as u64)
+        .sum();
+
+    let pb = ProgressBar::new(total);
     let mut ascii_books: Vec<usize> = Vec::new();
 
-    let pb = ProgressBar::new(txt_files.len() as u64);
-    for entry in txt_files {
-        let path_str = entry.path().to_str().context("Invalid path")?;
+    for bucket in 0..10u8 {
+        let zip_path = corpus_dir.join(format!("{bucket}.zip"));
+        if !zip_path.exists() {
+            continue;
+        }
+        let mut archive = ZipArchive::new(File::open(&zip_path)?)?;
 
-        if let Ok(header) = gutenberg::read_header(path_str)
-            && header.encoding.contains("ASCII")
-        {
-            if let Some(doc_id) = entry.path().file_stem().and_then(|s| s.to_str()).and_then(|s| s.parse::<usize>().ok()) {
+        for i in 0..archive.len() {
+            let mut entry = archive.by_index(i)?;
+            let name = entry.name().to_owned();
+            pb.inc(1);
+
+            let Some(doc_id) = Path::new(&name)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .and_then(|s| s.parse::<usize>().ok())
+            else {
+                continue;
+            };
+
+            let mut content = Vec::new();
+            entry.read_to_end(&mut content)?;
+
+            if let Ok(header) = gutenberg::read_header_from_reader(Cursor::new(&content))
+                && header.encoding.contains("ASCII")
+            {
                 ascii_books.push(doc_id);
             }
         }
-        pb.inc(1);
     }
     pb.finish();
 
@@ -40,9 +61,7 @@ pub fn collect_ascii_books(
     }
 
     let config = IndexerInput { doc_ids: ascii_books };
-
-    let file = File::create(save_indexer_input_json_to)?;
-    serde_json::to_writer_pretty(file, &config)?;
+    serde_json::to_writer_pretty(File::create(save_indexer_input_json_to)?, &config)?;
 
     Ok(())
 }

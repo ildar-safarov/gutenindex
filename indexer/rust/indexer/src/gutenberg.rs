@@ -18,7 +18,7 @@ pub fn read_header(path: &str) -> Result<GutenbergTxtHeader> {
     read_header_from_reader(file)
 }
 
-pub(crate) fn read_header_from_reader<R: io::Read>(reader: R) -> Result<GutenbergTxtHeader> {
+pub fn read_header_from_reader<R: io::Read>(reader: R) -> Result<GutenbergTxtHeader> {
     let mut reader = BufReader::new(reader);
 
     let mut result = GutenbergTxtHeader::default();
