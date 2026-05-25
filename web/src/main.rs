@@ -95,22 +95,13 @@ async fn book_page(State(state): State<Arc<AppState>>, Path(doc_id): Path<u32>) 
 }
 
 fn read_book(corpus: &std::path::Path, doc_id: u32) -> Option<String> {
-    let filename = format!("{doc_id}.txt");
-    for bucket in 0..10u8 {
-        let Ok(f) = File::open(corpus.join(format!("{bucket}.zip"))) else {
-            continue;
-        };
-        let Ok(mut archive) = ZipArchive::new(f) else {
-            continue;
-        };
-        let Ok(mut entry) = archive.by_name(&filename) else {
-            continue;
-        };
-        let mut buf = Vec::new();
-        entry.read_to_end(&mut buf).ok()?;
-        return Some(String::from_utf8_lossy(&buf).into_owned());
-    }
-    None
+    let bucket = doc_id % 10;
+    let f = File::open(corpus.join(format!("{bucket}.zip"))).ok()?;
+    let mut archive = ZipArchive::new(f).ok()?;
+    let mut entry = archive.by_name(&format!("{doc_id}.txt")).ok()?;
+    let mut buf = Vec::new();
+    entry.read_to_end(&mut buf).ok()?;
+    Some(String::from_utf8_lossy(&buf).into_owned())
 }
 
 fn esc(s: &str) -> String {
