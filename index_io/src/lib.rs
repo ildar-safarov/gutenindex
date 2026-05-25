@@ -1,7 +1,9 @@
 //! Binary index format (version 3):
 //!
+//! Index is a directory containing files with fixed names:
+//!
 //! ```text
-//! vocab file ({base}.vocab):
+//! vocab:
 //! +---------------------+
 //! | Header   (19 bytes) |
 //! |   magic      (4)    |  0x49584442 ("IXDB")
@@ -21,7 +23,7 @@
 //! | Words               |  Raw UTF-8 strings
 //! +---------------------+
 //!
-//! posting chunk files ({base}.0 … {base}.{chunk_count-1}):
+//! posting chunk files (0 … {chunk_count-1}):
 //! +---------------------+
 //! | Postings            |  Variable size
 //! |   doc_id    (4)     |
@@ -75,11 +77,14 @@ pub struct VocabEntry {
 pub struct IndexIo {
     vocab: memmap2::Mmap,
     chunks: Vec<memmap2::Mmap>,
+    meta: memmap2::Mmap,
+    meta_max_doc_id: u32,
+    meta_lengths_base: usize,
+    meta_strings_base: usize,
     word_count: usize,
     doc_count: u32,
     avg_doc_len: f32,
     doc_lengths: Vec<u32>,
-    titles: HashMap<u32, String>,
 }
 
 #[derive(Debug, Clone)]
@@ -100,7 +105,7 @@ impl IndexIo {
     pub fn open<P: AsRef<Path>>(base: P) -> Result<Self> {
         let base = base.as_ref();
 
-        let vocab_file = File::open(base.with_extension("vocab"))?;
+        let vocab_file = File::open(base.join("vocab"))?;
         let vocab = unsafe { memmap2::Mmap::map(&vocab_file)? };
 
         if vocab.len() < HEADER_SIZE {
@@ -124,25 +129,27 @@ impl IndexIo {
 
         let mut chunks = Vec::with_capacity(chunk_count);
         for i in 0..chunk_count {
-            let f = File::open(base.with_extension(i.to_string()))?;
+            let f = File::open(base.join(i.to_string()))?;
             chunks.push(unsafe { memmap2::Mmap::map(&f)? });
         }
 
-        let doclen_data = std::fs::read(base.with_extension("doclen"))?;
+        let doclen_data = std::fs::read(base.join("doclen"))?;
         let doc_lengths: Vec<u32> = doclen_data
             .chunks_exact(4)
             .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
             .collect();
 
-        let titles: HashMap<u32, String> = {
-            let raw: HashMap<String, String> =
-                serde_json::from_str(&std::fs::read_to_string(base.with_extension("titles"))?)?;
-            raw.into_iter()
-                .filter_map(|(k, v)| Some((k.parse::<u32>().ok()?, v)))
-                .collect()
-        };
+        let meta_file = File::open(base.join("meta"))?;
+        let meta = unsafe { memmap2::Mmap::map(&meta_file)? };
+        let meta_max_doc_id = Self::read_u32_at(&meta, 0);
+        let n = meta_max_doc_id as usize + 1;
+        let meta_lengths_base = 4 + n * 4;
+        let meta_strings_base = meta_lengths_base + n * 2;
 
-        Ok(Self { vocab, chunks, word_count, doc_count, avg_doc_len, doc_lengths, titles })
+        Ok(Self {
+            vocab, chunks, meta, meta_max_doc_id, meta_lengths_base, meta_strings_base,
+            word_count, doc_count, avg_doc_len, doc_lengths,
+        })
     }
 
     pub fn write<P: AsRef<Path>>(
@@ -152,6 +159,7 @@ impl IndexIo {
         base: P,
     ) -> Result<()> {
         let base = base.as_ref();
+        std::fs::create_dir_all(base)?;
         let chunk_count = CHUNK_COUNT as usize;
 
         let mut keys: Vec<&String> = global_index.keys().collect();
@@ -199,7 +207,7 @@ impl IndexIo {
             word_offset += key.len() as u64;
         }
 
-        let vocab_file = File::create(base.with_extension("vocab"))?;
+        let vocab_file = File::create(base.join("vocab"))?;
         let mut w = BufWriter::new(&vocab_file);
 
         w.write_all(&MAGIC.to_le_bytes())?;
@@ -224,7 +232,7 @@ impl IndexIo {
         vocab_file.sync_all()?;
 
         let mut chunk_writers: Vec<BufWriter<File>> = (0..chunk_count)
-            .map(|i| File::create(base.with_extension(i.to_string())).map(BufWriter::new))
+            .map(|i| File::create(base.join(i.to_string())).map(BufWriter::new))
             .collect::<Result<_, _>>()?;
 
         for (i, key) in keys.iter().enumerate() {
@@ -243,7 +251,7 @@ impl IndexIo {
             cw.into_inner().unwrap().sync_all()?;
         }
 
-        let doclen_file = File::create(base.with_extension("doclen"))?;
+        let doclen_file = File::create(base.join("doclen"))?;
         let mut dw = BufWriter::new(&doclen_file);
         for len in &dl_array {
             dw.write_all(&len.to_le_bytes())?;
@@ -251,9 +259,26 @@ impl IndexIo {
         dw.flush()?;
         doclen_file.sync_all()?;
 
-        let titles_map: HashMap<String, &String> =
-            titles.iter().map(|(id, t)| (id.to_string(), t)).collect();
-        serde_json::to_writer(File::create(base.with_extension("titles"))?, &titles_map)?;
+        let meta_max_doc_id = titles.keys().max().copied().unwrap_or(0) as u32;
+        let n = meta_max_doc_id as usize + 1;
+        let mut meta_offsets = vec![0u32; n];
+        let mut meta_lengths = vec![0u16; n];
+        let mut meta_strings: Vec<u8> = Vec::new();
+        for (&doc_id, title) in titles {
+            let bytes = title.as_bytes();
+            meta_offsets[doc_id] = meta_strings.len() as u32;
+            meta_lengths[doc_id] = bytes.len() as u16;
+            meta_strings.extend_from_slice(bytes);
+        }
+
+        let meta_file = File::create(base.join("meta"))?;
+        let mut mw = BufWriter::new(&meta_file);
+        mw.write_all(&meta_max_doc_id.to_le_bytes())?;
+        for o in &meta_offsets { mw.write_all(&o.to_le_bytes())?; }
+        for l in &meta_lengths { mw.write_all(&l.to_le_bytes())?; }
+        mw.write_all(&meta_strings)?;
+        mw.flush()?;
+        meta_file.sync_all()?;
 
         Ok(())
     }
@@ -298,7 +323,23 @@ impl IndexIo {
     }
 
     pub fn doc_title(&self, doc_id: u32) -> Option<&str> {
-        self.titles.get(&doc_id).map(|s| s.as_str())
+        if doc_id > self.meta_max_doc_id {
+            return None;
+        }
+        let i = doc_id as usize;
+        let offset = Self::read_u32_at(&self.meta, 4 + i * 4) as usize;
+        let length = u16::from_le_bytes(
+            self.meta[self.meta_lengths_base + i * 2..self.meta_lengths_base + i * 2 + 2]
+                .try_into()
+                .unwrap(),
+        ) as usize;
+        if length == 0 {
+            return None;
+        }
+        std::str::from_utf8(
+            &self.meta[self.meta_strings_base + offset..self.meta_strings_base + offset + length],
+        )
+        .ok()
     }
 
     pub(crate) fn get_vocab_entry(&self, idx: usize) -> VocabEntry {
