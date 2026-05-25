@@ -10,7 +10,7 @@ use zip::ZipArchive;
 pub fn collect_ascii_books(
     corpus_dir: impl AsRef<Path>,
     save_indexer_input_json_to: impl AsRef<Path>,
-    limit: Option<usize>,
+    max_doc_id: Option<usize>,
 ) -> Result<()> {
     let corpus_dir = corpus_dir.as_ref();
 
@@ -43,6 +43,10 @@ pub fn collect_ascii_books(
                 continue;
             };
 
+            if max_doc_id.is_some_and(|max| doc_id > max) {
+                continue;
+            }
+
             let mut content = Vec::new();
             entry.read_to_end(&mut content)?;
 
@@ -56,9 +60,6 @@ pub fn collect_ascii_books(
     pb.finish();
 
     ascii_books.sort();
-    if let Some(n) = limit {
-        ascii_books.truncate(n);
-    }
 
     let config = IndexerInput { doc_ids: ascii_books };
     serde_json::to_writer_pretty(File::create(save_indexer_input_json_to)?, &config)?;

@@ -40,9 +40,9 @@ enum ToolsCommands {
         /// Path to save the indexer input JSON file to
         #[arg(long)]
         save_indexer_input_json_to: String,
-        /// Maximum number of doc_ids to collect
+        /// Skip all docs with doc_id greater than this value
         #[arg(long)]
-        limit: Option<usize>,
+        max_doc_id: Option<usize>,
     },
 }
 
@@ -57,9 +57,9 @@ fn main() -> Result<()> {
             ToolsCommands::CollectAscii {
                 corpus_dir,
                 save_indexer_input_json_to,
-                limit,
+                max_doc_id,
             } => {
-                collect_ascii_books(corpus_dir, save_indexer_input_json_to, *limit)?;
+                collect_ascii_books(corpus_dir, save_indexer_input_json_to, *max_doc_id)?;
             }
         },
         None => {

@@ -50,7 +50,7 @@ def main():
         run(
             str(INDEXER_CLI), "tools", "collect-ascii",
             "--corpus-dir", str(CORPUS_DIR / "zips"),
-            "--limit", "1500",
+            "--max-doc-id", "1499",
             "--save-indexer-input-json-to", str(manifest),
         )
         doc_ids = set(json.loads(manifest.read_text())["doc_ids"])
