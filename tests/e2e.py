@@ -8,6 +8,7 @@ REPO = Path(__file__).parent.parent
 INDEXER_CLI = REPO / "target/release/indexer-cli"
 SEARCH_CLI = REPO / "target/release/search-cli"
 CORPUS_DIR = REPO / "corpus"
+LIBRARY_DIR = CORPUS_DIR / "docs_pg/doc_files"
 
 
 def run(*args, **kwargs):
@@ -45,21 +46,27 @@ def main():
         print("Step 1: cargo build --release")
         run("cargo", "build", "--release", cwd=REPO)
 
-        print("Step 2: collect-ascii --limit 1500")
-        manifest = tmp / "manifest.json"
-        run(
-            str(INDEXER_CLI), "tools", "collect-ascii",
-            "--library-dir", str(CORPUS_DIR / "docs_pg/doc_files"),
-            "--limit", "1500",
-            "--save-indexer-input-json-to", str(manifest),
-        )
-        doc_ids = set(json.loads(manifest.read_text())["doc_ids"])
-        assert 0 in doc_ids, "doc_id 0 not found"
-        assert 1000 in doc_ids, "doc_id 1000 not found"
-        print(f"  collected {len(doc_ids)} docs, 0 and 1000 present")
+        if LIBRARY_DIR.exists():
+            print("Step 2: collect-ascii --limit 1500")
+            manifest = tmp / "manifest.json"
+            run(
+                str(INDEXER_CLI), "tools", "collect-ascii",
+                "--library-dir", str(LIBRARY_DIR),
+                "--limit", "1500",
+                "--save-indexer-input-json-to", str(manifest),
+            )
+            doc_ids = set(json.loads(manifest.read_text())["doc_ids"])
+            assert 0 in doc_ids, "doc_id 0 not found"
+            assert 1000 in doc_ids, "doc_id 1000 not found"
+            print(f"  collected {len(doc_ids)} docs, 0 and 1000 present")
+        else:
+            print("Step 2: collect-ascii skipped (library dir not present), using corpus/ascii.json")
+            all_doc_ids = sorted(json.loads((CORPUS_DIR / "ascii.json").read_text())["doc_ids"])
+            manifest = tmp / "manifest.json"
+            manifest.write_text(json.dumps({"doc_ids": all_doc_ids[:1500]}))
 
         print("Step 3: build index")
-        index = tmp / "index.bin"
+        index = tmp / "index"
         run(
             str(INDEXER_CLI), "index",
             "--indexer-input", str(manifest),

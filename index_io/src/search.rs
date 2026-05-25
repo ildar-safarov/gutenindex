@@ -42,18 +42,19 @@ impl SearchIndex {
     /// Uses O(1) direct offset lookup instead of scanning previous entries.
     fn get_postings(&self, idx: usize) -> SearchResult {
         let entry = self.index.get_vocab_entry(idx);
+        let chunk_id = entry.chunk_id;
         let mut offset = entry.posting_offset as usize;
 
         let mut postings = Vec::with_capacity(entry.posting_count as usize);
 
         for _ in 0..entry.posting_count {
-            let doc_id = self.index.read_u32(offset);
-            let loc_count = self.index.read_u32(offset + DOC_ID_SIZE) as usize;
+            let doc_id = self.index.read_u32_chunk(chunk_id, offset);
+            let loc_count = self.index.read_u32_chunk(chunk_id, offset + DOC_ID_SIZE) as usize;
             offset += DOC_ID_SIZE + LOC_COUNT_SIZE;
 
             let mut locations = Vec::with_capacity(loc_count);
             for _ in 0..loc_count {
-                locations.push(self.index.read_u64(offset));
+                locations.push(self.index.read_u64_chunk(chunk_id, offset));
                 offset += LOCATION_SIZE;
             }
 

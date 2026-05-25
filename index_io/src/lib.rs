@@ -1,25 +1,31 @@
-//! Binary index file format:
+//! Binary index format (version 2):
 //!
 //! ```text
-//! +------------------+
-//! | Header (10 bytes)|
-//! |   magic (4)      |  0x49584442 ("IXDB")
-//! |   version (2)    |  Currently 1
-//! |   word_count (4) |  Number of vocabulary entries
-//! +------------------+
-//! | Vocabulary       |  24 bytes per entry
-//! |   word_offset (8)|  Offset to word string
-//! |   word_len (4)   |  Length of word string
-//! |   posting_cnt (4)|  Number of postings
-//! |   post_offset (8)|  Offset to posting data
-//! +------------------+
-//! | Postings         |  Variable size
-//! |   doc_id (4)     |
-//! |   loc_count (4)  |
-//! |   locations (8*n)|
-//! +------------------+
-//! | Words            |  Raw UTF-8 strings
-//! +------------------+
+//! vocab file ({base}.vocab):
+//! +---------------------+
+//! | Header   (11 bytes) |
+//! |   magic      (4)    |  0x49584442 ("IXDB")
+//! |   version    (2)    |  2
+//! |   word_count (4)    |
+//! |   chunk_count (1)   |
+//! +---------------------+
+//! | Vocabulary          |  25 bytes per entry
+//! |   word_offset (8)   |  Offset to word string in this file
+//! |   word_len    (4)   |
+//! |   posting_cnt (4)   |
+//! |   chunk_id    (1)   |  Which posting chunk file
+//! |   post_offset (8)   |  Offset within that chunk file
+//! +---------------------+
+//! | Words               |  Raw UTF-8 strings
+//! +---------------------+
+//!
+//! posting chunk files ({base}.0 … {base}.{chunk_count-1}):
+//! +---------------------+
+//! | Postings            |  Variable size
+//! |   doc_id    (4)     |
+//! |   loc_count (4)     |
+//! |   locations (8*n)   |
+//! +---------------------+
 //! ```
 
 pub mod search;
@@ -31,43 +37,38 @@ use std::io::{BufWriter, Write};
 use std::path::Path;
 
 const MAGIC: u32 = 0x49584442;
-const VERSION: u16 = 1;
+const VERSION: u16 = 2;
+const CHUNK_COUNT: u8 = 8;
 
-const MAGIC_SIZE: usize = 4;
-const VERSION_SIZE: usize = 2;
-const WORD_COUNT_SIZE: usize = 4;
-const HEADER_SIZE: usize = MAGIC_SIZE + VERSION_SIZE + WORD_COUNT_SIZE;
+const HEADER_SIZE: usize = 4 + 2 + 4 + 1;
 
 const WORD_OFFSET_SIZE: usize = 8;
 const WORD_LEN_SIZE: usize = 4;
 const POSTING_COUNT_SIZE: usize = 4;
+const CHUNK_ID_SIZE: usize = 1;
 const POSTING_OFFSET_SIZE: usize = 8;
 const VOCAB_ENTRY_SIZE: usize =
-    WORD_OFFSET_SIZE + WORD_LEN_SIZE + POSTING_COUNT_SIZE + POSTING_OFFSET_SIZE;
+    WORD_OFFSET_SIZE + WORD_LEN_SIZE + POSTING_COUNT_SIZE + CHUNK_ID_SIZE + POSTING_OFFSET_SIZE;
 
 const DOC_ID_SIZE: usize = 4;
 const LOC_COUNT_SIZE: usize = 4;
 const LOCATION_SIZE: usize = 8;
 
-/// A vocabulary entry containing metadata for a word in the index.
 #[derive(Debug, Clone, Copy)]
 pub struct VocabEntry {
-    /// Byte offset to the word string in the file
     pub word_offset: u64,
-    /// Length of the word string in bytes
     pub word_len: u32,
-    /// Number of postings for this word
     pub posting_count: u32,
-    /// Byte offset to the posting data in the file
+    pub chunk_id: u8,
     pub posting_offset: u64,
 }
 
 /// Memory-mapped index reader.
 #[derive(Debug)]
 pub struct IndexIo {
-    data: memmap2::Mmap,
+    vocab: memmap2::Mmap,
+    chunks: Vec<memmap2::Mmap>,
     word_count: usize,
-    vocab_offset: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -85,49 +86,116 @@ pub struct SearchResult {
 pub type GlobalIndex = HashMap<String, Vec<(usize, Vec<usize>)>>;
 
 impl IndexIo {
-    pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let file = File::open(path)?;
-        let data = unsafe { memmap2::Mmap::map(&file)? };
+    pub fn open<P: AsRef<Path>>(base: P) -> Result<Self> {
+        let base = base.as_ref();
 
-        if data.len() < HEADER_SIZE {
-            anyhow::bail!(
-                "File too small: {} bytes, minimum {} required",
-                data.len(),
-                HEADER_SIZE
-            );
+        let vocab_file = File::open(base.with_extension("vocab"))?;
+        let vocab = unsafe { memmap2::Mmap::map(&vocab_file)? };
+
+        if vocab.len() < HEADER_SIZE {
+            anyhow::bail!("Vocab file too small");
         }
 
-        let magic = Self::read_u32_at(&data, 0);
+        let magic = Self::read_u32_at(&vocab, 0);
         if magic != MAGIC {
-            anyhow::bail!(
-                "Invalid magic number: expected 0x{:08X}, got 0x{:08X}",
-                MAGIC,
-                magic
-            );
+            anyhow::bail!("Invalid magic: 0x{:08X}", magic);
         }
 
-        let version = Self::read_u16_at(&data, MAGIC_SIZE);
+        let version = Self::read_u16_at(&vocab, 4);
         if version != VERSION {
             anyhow::bail!("Unsupported version: {}", version);
         }
 
-        let word_count = Self::read_u32_at(&data, MAGIC_SIZE + VERSION_SIZE) as usize;
-        let vocab_offset = HEADER_SIZE;
+        let word_count = Self::read_u32_at(&vocab, 6) as usize;
+        let chunk_count = vocab[10] as usize;
 
-        let min_size = HEADER_SIZE + word_count * VOCAB_ENTRY_SIZE;
-        if data.len() < min_size {
-            anyhow::bail!(
-                "File too small for vocabulary: {} bytes, minimum {} required",
-                data.len(),
-                min_size
-            );
+        let mut chunks = Vec::with_capacity(chunk_count);
+        for i in 0..chunk_count {
+            let f = File::open(base.with_extension(i.to_string()))?;
+            chunks.push(unsafe { memmap2::Mmap::map(&f)? });
         }
 
-        Ok(Self {
-            data,
-            word_count,
-            vocab_offset,
-        })
+        Ok(Self { vocab, chunks, word_count })
+    }
+
+    pub fn write<P: AsRef<Path>>(global_index: &GlobalIndex, base: P) -> Result<()> {
+        let base = base.as_ref();
+        let chunk_count = CHUNK_COUNT as usize;
+
+        let mut keys: Vec<&String> = global_index.keys().collect();
+        keys.sort();
+        let word_count = keys.len();
+
+        let chunk_ids: Vec<u8> = (0..word_count).map(|i| (i % chunk_count) as u8).collect();
+
+        let posting_sizes: Vec<usize> = keys
+            .iter()
+            .map(|key| {
+                global_index[*key]
+                    .iter()
+                    .map(|(_, locs)| DOC_ID_SIZE + LOC_COUNT_SIZE + locs.len() * LOCATION_SIZE)
+                    .sum()
+            })
+            .collect();
+
+        let mut chunk_cursors = vec![0usize; chunk_count];
+        let mut posting_offsets = Vec::with_capacity(word_count);
+        for (i, &chunk_id) in chunk_ids.iter().enumerate() {
+            posting_offsets.push(chunk_cursors[chunk_id as usize]);
+            chunk_cursors[chunk_id as usize] += posting_sizes[i];
+        }
+
+        let words_start = HEADER_SIZE + word_count * VOCAB_ENTRY_SIZE;
+        let mut word_offset = words_start as u64;
+        let mut word_offsets = Vec::with_capacity(word_count);
+        for key in &keys {
+            word_offsets.push(word_offset);
+            word_offset += key.len() as u64;
+        }
+
+        let vocab_file = File::create(base.with_extension("vocab"))?;
+        let mut w = BufWriter::new(&vocab_file);
+
+        w.write_all(&MAGIC.to_le_bytes())?;
+        w.write_all(&VERSION.to_le_bytes())?;
+        w.write_all(&(word_count as u32).to_le_bytes())?;
+        w.write_all(&[CHUNK_COUNT])?;
+
+        for (i, key) in keys.iter().enumerate() {
+            w.write_all(&word_offsets[i].to_le_bytes())?;
+            w.write_all(&(key.len() as u32).to_le_bytes())?;
+            w.write_all(&(global_index[*key].len() as u32).to_le_bytes())?;
+            w.write_all(&[chunk_ids[i]])?;
+            w.write_all(&(posting_offsets[i] as u64).to_le_bytes())?;
+        }
+
+        for key in &keys {
+            w.write_all(key.as_bytes())?;
+        }
+        w.flush()?;
+        vocab_file.sync_all()?;
+
+        let mut chunk_writers: Vec<BufWriter<File>> = (0..chunk_count)
+            .map(|i| File::create(base.with_extension(i.to_string())).map(BufWriter::new))
+            .collect::<Result<_, _>>()?;
+
+        for (i, key) in keys.iter().enumerate() {
+            let cw = &mut chunk_writers[chunk_ids[i] as usize];
+            for (doc_id, locations) in &global_index[*key] {
+                cw.write_all(&(*doc_id as u32).to_le_bytes())?;
+                cw.write_all(&(locations.len() as u32).to_le_bytes())?;
+                for loc in locations {
+                    cw.write_all(&(*loc as u64).to_le_bytes())?;
+                }
+            }
+        }
+
+        for mut cw in chunk_writers {
+            cw.flush()?;
+            cw.into_inner().unwrap().sync_all()?;
+        }
+
+        Ok(())
     }
 
     fn read_u16_at(data: &[u8], offset: usize) -> u16 {
@@ -142,74 +210,12 @@ impl IndexIo {
         u64::from_le_bytes(data[offset..offset + 8].try_into().unwrap())
     }
 
-    pub(crate) fn read_u32(&self, offset: usize) -> u32 {
-        Self::read_u32_at(&self.data, offset)
+    pub(crate) fn read_u32_chunk(&self, chunk_id: u8, offset: usize) -> u32 {
+        Self::read_u32_at(&self.chunks[chunk_id as usize], offset)
     }
 
-    pub(crate) fn read_u64(&self, offset: usize) -> u64 {
-        Self::read_u64_at(&self.data, offset)
-    }
-
-    pub fn write<P: AsRef<Path>>(global_index: &GlobalIndex, path: P) -> Result<()> {
-        let path = path.as_ref();
-
-        let word_count = global_index.len();
-
-        let mut keys: Vec<&String> = global_index.keys().collect();
-        keys.sort();
-
-        let file = File::create(path)?;
-        let mut writer = BufWriter::new(&file);
-
-        writer.write_all(&MAGIC.to_le_bytes())?;
-        writer.write_all(&VERSION.to_le_bytes())?;
-        writer.write_all(&(word_count as u32).to_le_bytes())?;
-
-        let mut posting_sizes: Vec<usize> = Vec::with_capacity(keys.len());
-        for key in &keys {
-            let postings = &global_index[*key];
-            let mut size = 0;
-            for (_, locations) in postings {
-                size += DOC_ID_SIZE + LOC_COUNT_SIZE + locations.len() * LOCATION_SIZE;
-            }
-            posting_sizes.push(size);
-        }
-
-        let postings_start = (HEADER_SIZE + word_count * VOCAB_ENTRY_SIZE) as u64;
-        let total_posting_size: usize = posting_sizes.iter().sum();
-        let words_start = postings_start + total_posting_size as u64;
-
-        let mut word_offset = words_start;
-        let mut posting_offset = postings_start;
-        for (i, key) in keys.iter().enumerate() {
-            writer.write_all(&word_offset.to_le_bytes())?;
-            writer.write_all(&(key.len() as u32).to_le_bytes())?;
-            writer.write_all(&(global_index[*key].len() as u32).to_le_bytes())?;
-            writer.write_all(&posting_offset.to_le_bytes())?;
-
-            word_offset += key.len() as u64;
-            posting_offset += posting_sizes[i] as u64;
-        }
-
-        for key in &keys {
-            let postings = &global_index[*key];
-            for (doc_id, locations) in postings {
-                writer.write_all(&(*doc_id as u32).to_le_bytes())?;
-                writer.write_all(&(locations.len() as u32).to_le_bytes())?;
-                for loc in locations {
-                    writer.write_all(&(*loc as u64).to_le_bytes())?;
-                }
-            }
-        }
-
-        for key in &keys {
-            writer.write_all(key.as_bytes())?;
-        }
-
-        writer.flush()?;
-        file.sync_all()?;
-
-        Ok(())
+    pub(crate) fn read_u64_chunk(&self, chunk_id: u8, offset: usize) -> u64 {
+        Self::read_u64_at(&self.chunks[chunk_id as usize], offset)
     }
 
     #[must_use]
@@ -218,20 +224,24 @@ impl IndexIo {
     }
 
     pub(crate) fn get_vocab_entry(&self, idx: usize) -> VocabEntry {
-        let start = self.vocab_offset + idx * VOCAB_ENTRY_SIZE;
+        let start = HEADER_SIZE + idx * VOCAB_ENTRY_SIZE;
+        let d = &self.vocab;
         VocabEntry {
-            word_offset: self.read_u64(start),
-            word_len: self.read_u32(start + WORD_OFFSET_SIZE),
-            posting_count: self.read_u32(start + WORD_OFFSET_SIZE + WORD_LEN_SIZE),
-            posting_offset: self
-                .read_u64(start + WORD_OFFSET_SIZE + WORD_LEN_SIZE + POSTING_COUNT_SIZE),
+            word_offset: Self::read_u64_at(d, start),
+            word_len: Self::read_u32_at(d, start + WORD_OFFSET_SIZE),
+            posting_count: Self::read_u32_at(d, start + WORD_OFFSET_SIZE + WORD_LEN_SIZE),
+            chunk_id: d[start + WORD_OFFSET_SIZE + WORD_LEN_SIZE + POSTING_COUNT_SIZE],
+            posting_offset: Self::read_u64_at(
+                d,
+                start + WORD_OFFSET_SIZE + WORD_LEN_SIZE + POSTING_COUNT_SIZE + CHUNK_ID_SIZE,
+            ),
         }
     }
 
     pub(crate) fn get_word_bytes(&self, idx: usize) -> &[u8] {
         let entry = self.get_vocab_entry(idx);
         let start = entry.word_offset as usize;
-        &self.data[start..start + entry.word_len as usize]
+        &self.vocab[start..start + entry.word_len as usize]
     }
 
     #[must_use]
