@@ -5,6 +5,7 @@ members = [
     "indexer/rust/indexer-cli",
     "indexer/rust/tools",
     "search-cli",
+    "web",
 ]
 resolver = "2"
 
