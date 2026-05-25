@@ -60,16 +60,16 @@ def main():
     ssh(host, f"chmod +x {BINARY}")
 
     print("==> 3/6  install packages")
-    ssh(host, "apt-get update -qq && apt-get install -y -q supervisor wget")
+    ssh(host, "apt-get update -qq && apt-get install -y -q supervisor curl")
 
     print("==> 4/6  download corpus")
     ssh(host, f"mkdir -p {BASE}/corpus {BASE}/index")
     for f in CORPUS_FILES:
-        ssh(host, f"[ -f {BASE}/corpus/{f} ] || wget -q -O {BASE}/corpus/{f} '{gh_url(CORPUS_TAG, f)}'")
+        ssh(host, f"[ -f {BASE}/corpus/{f} ] || curl -fsSL -o {BASE}/corpus/{f} '{gh_url(CORPUS_TAG, f)}'")
 
     print("==> 5/6  download index")
     for f in INDEX_FILES:
-        ssh(host, f"[ -f {BASE}/index/{f} ] || wget -q -O {BASE}/index/{f} '{gh_url(INDEX_TAG, f)}'")
+        ssh(host, f"[ -f {BASE}/index/{f} ] || curl -fsSL -o {BASE}/index/{f} '{gh_url(INDEX_TAG, f)}'")
 
     print("==> 6/6  configure supervisor")
     pipe_to(host, SUPERVISOR_CONF, (
