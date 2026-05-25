@@ -1,13 +1,15 @@
-//! Binary index format (version 2):
+//! Binary index format (version 3):
 //!
 //! ```text
 //! vocab file ({base}.vocab):
 //! +---------------------+
-//! | Header   (11 bytes) |
+//! | Header   (19 bytes) |
 //! |   magic      (4)    |  0x49584442 ("IXDB")
-//! |   version    (2)    |  2
+//! |   version    (2)    |  3
 //! |   word_count (4)    |
 //! |   chunk_count (1)   |
+//! |   doc_count  (4)    |  number of indexed documents
+//! |   avg_doc_len (4)   |  f32, average document length in words
 //! +---------------------+
 //! | Vocabulary          |  25 bytes per entry
 //! |   word_offset (8)   |  Offset to word string in this file
@@ -26,6 +28,11 @@
 //! |   loc_count (4)     |
 //! |   locations (8*n)   |
 //! +---------------------+
+//!
+//! doc length file ({base}.doclen):
+//! +---------------------+
+//! | doc_lengths (4*n)   |  u32 array indexed by doc_id
+//! +---------------------+
 //! ```
 
 pub mod search;
@@ -37,10 +44,10 @@ use std::io::{BufWriter, Write};
 use std::path::Path;
 
 const MAGIC: u32 = 0x49584442;
-const VERSION: u16 = 2;
+const VERSION: u16 = 3;
 const CHUNK_COUNT: u8 = 8;
 
-const HEADER_SIZE: usize = 4 + 2 + 4 + 1;
+const HEADER_SIZE: usize = 4 + 2 + 4 + 1 + 4 + 4; // 19
 
 const WORD_OFFSET_SIZE: usize = 8;
 const WORD_LEN_SIZE: usize = 4;
@@ -69,6 +76,9 @@ pub struct IndexIo {
     vocab: memmap2::Mmap,
     chunks: Vec<memmap2::Mmap>,
     word_count: usize,
+    doc_count: u32,
+    avg_doc_len: f32,
+    doc_lengths: Vec<u32>,
 }
 
 #[derive(Debug, Clone)]
@@ -108,6 +118,8 @@ impl IndexIo {
 
         let word_count = Self::read_u32_at(&vocab, 6) as usize;
         let chunk_count = vocab[10] as usize;
+        let doc_count = Self::read_u32_at(&vocab, 11);
+        let avg_doc_len = f32::from_le_bytes(vocab[15..19].try_into().unwrap());
 
         let mut chunks = Vec::with_capacity(chunk_count);
         for i in 0..chunk_count {
@@ -115,16 +127,40 @@ impl IndexIo {
             chunks.push(unsafe { memmap2::Mmap::map(&f)? });
         }
 
-        Ok(Self { vocab, chunks, word_count })
+        let doclen_data = std::fs::read(base.with_extension("doclen"))?;
+        let doc_lengths: Vec<u32> = doclen_data
+            .chunks_exact(4)
+            .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
+            .collect();
+
+        Ok(Self { vocab, chunks, word_count, doc_count, avg_doc_len, doc_lengths })
     }
 
-    pub fn write<P: AsRef<Path>>(global_index: &GlobalIndex, base: P) -> Result<()> {
+    pub fn write<P: AsRef<Path>>(
+        global_index: &GlobalIndex,
+        doc_lengths: &HashMap<usize, u32>,
+        base: P,
+    ) -> Result<()> {
         let base = base.as_ref();
         let chunk_count = CHUNK_COUNT as usize;
 
         let mut keys: Vec<&String> = global_index.keys().collect();
         keys.sort();
         let word_count = keys.len();
+
+        let doc_count = doc_lengths.len() as u32;
+        let total_words: u64 = doc_lengths.values().map(|&l| l as u64).sum();
+        let avg_doc_len: f32 = if doc_count > 0 {
+            total_words as f32 / doc_count as f32
+        } else {
+            0.0
+        };
+
+        let max_doc_id = doc_lengths.keys().max().copied().unwrap_or(0);
+        let mut dl_array = vec![0u32; max_doc_id + 1];
+        for (&doc_id, &len) in doc_lengths {
+            dl_array[doc_id] = len;
+        }
 
         let chunk_ids: Vec<u8> = (0..word_count).map(|i| (i % chunk_count) as u8).collect();
 
@@ -160,6 +196,8 @@ impl IndexIo {
         w.write_all(&VERSION.to_le_bytes())?;
         w.write_all(&(word_count as u32).to_le_bytes())?;
         w.write_all(&[CHUNK_COUNT])?;
+        w.write_all(&doc_count.to_le_bytes())?;
+        w.write_all(&avg_doc_len.to_le_bytes())?;
 
         for (i, key) in keys.iter().enumerate() {
             w.write_all(&word_offsets[i].to_le_bytes())?;
@@ -195,6 +233,14 @@ impl IndexIo {
             cw.into_inner().unwrap().sync_all()?;
         }
 
+        let doclen_file = File::create(base.with_extension("doclen"))?;
+        let mut dw = BufWriter::new(&doclen_file);
+        for len in &dl_array {
+            dw.write_all(&len.to_le_bytes())?;
+        }
+        dw.flush()?;
+        doclen_file.sync_all()?;
+
         Ok(())
     }
 
@@ -221,6 +267,20 @@ impl IndexIo {
     #[must_use]
     pub fn word_count(&self) -> usize {
         self.word_count
+    }
+
+    #[must_use]
+    pub fn doc_count(&self) -> u32 {
+        self.doc_count
+    }
+
+    #[must_use]
+    pub fn avg_doc_len(&self) -> f32 {
+        self.avg_doc_len
+    }
+
+    pub(crate) fn doc_len(&self, doc_id: u32) -> u32 {
+        self.doc_lengths.get(doc_id as usize).copied().unwrap_or(0)
     }
 
     pub(crate) fn get_vocab_entry(&self, idx: usize) -> VocabEntry {

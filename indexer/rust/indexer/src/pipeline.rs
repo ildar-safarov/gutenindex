@@ -3,6 +3,7 @@ use anyhow::Result;
 use index_io::{GlobalIndex, IndexIo};
 use indicatif::ProgressBar;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs::File;
 use std::path::Path;
 use zip::ZipArchive;
@@ -25,6 +26,7 @@ pub fn index_files(
 
     let pb = ProgressBar::new(indexer_input.doc_ids.len() as u64);
     let mut global_index: GlobalIndex = GlobalIndex::new();
+    let mut doc_lengths: HashMap<usize, u32> = HashMap::new();
 
     let mut by_bucket: [Vec<usize>; 10] = Default::default();
     for doc_id in indexer_input.doc_ids {
@@ -44,6 +46,8 @@ pub fn index_files(
                 pb.inc(1);
                 continue;
             };
+            let doc_len: u32 = doc_index.values().map(|v| v.len()).sum::<usize>() as u32;
+            doc_lengths.insert(doc_id, doc_len);
             for (word, locations) in doc_index {
                 global_index
                     .entry(word)
@@ -56,6 +60,6 @@ pub fn index_files(
 
     pb.finish();
 
-    IndexIo::write(&global_index, output_db_path)?;
+    IndexIo::write(&global_index, &doc_lengths, output_db_path)?;
     Ok(())
 }
