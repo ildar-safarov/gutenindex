@@ -31,10 +31,18 @@
 //! |   locations (8*n)   |
 //! +---------------------+
 //!
-//! doc length file ({base}.doclen):
+//! doclen:
 //! +---------------------+
 //! | doc_lengths (4*n)   |  u32 array indexed by doc_id
 //! +---------------------+
+//!
+//! meta:
+//! +-------------------------+
+//! | max_doc_id        (4)   |  u32; n = max_doc_id + 1
+//! | offsets     (4*n)       |  u32 per doc_id: byte offset into strings section
+//! | lengths     (2*n)       |  u16 per doc_id: byte length of title (0 = no title)
+//! | strings     (variable)  |  raw UTF-8, concatenated
+//! +-------------------------+
 //! ```
 
 pub mod search;
