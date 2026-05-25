@@ -62,11 +62,7 @@ impl SearchIndex {
             for posting in &result.postings {
                 let tf = posting.locations.len() as f32;
                 let dl = self.index.doc_len(posting.doc_id) as f32;
-                let tf_norm = if avgdl > 0.0 {
-                    tf * (K1 + 1.0) / (tf + K1 * (1.0 - B + B * dl / avgdl))
-                } else {
-                    tf * (K1 + 1.0) / (tf + K1)
-                };
+                let tf_norm = tf * (K1 + 1.0) / (tf + K1 * (1.0 - B + B * dl / avgdl));
                 *scores.entry(posting.doc_id).or_insert(0.0) += idf * tf_norm;
             }
         }
