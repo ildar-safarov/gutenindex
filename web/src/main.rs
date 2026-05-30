@@ -7,6 +7,7 @@ use axum::{
 };
 use clap::Parser;
 use index_io::IndexIo;
+use search::SearchIndex;
 use std::{collections::HashMap, fs::File, io::Read, path::PathBuf, sync::Arc};
 use zip::ZipArchive;
 
@@ -21,7 +22,7 @@ struct Cli {
 }
 
 struct AppState {
-    search: index_io::search::SearchIndex,
+    search: SearchIndex,
     corpus: PathBuf,
 }
 
@@ -29,7 +30,7 @@ struct AppState {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     let state = Arc::new(AppState {
-        search: IndexIo::open(&cli.index)?.into_search_index(),
+        search: SearchIndex::new(IndexIo::open(&cli.index)?),
         corpus: PathBuf::from(cli.corpus),
     });
     let app = Router::new()

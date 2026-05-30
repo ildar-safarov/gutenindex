@@ -7,4 +7,5 @@ edition = "2024"
 anyhow = { workspace = true }
 clap = { workspace = true }
 index_io = { workspace = true }
+search = { workspace = true }
 serde_json = { workspace = true }

@@ -45,8 +45,6 @@
 //! +-------------------------+
 //! ```
 
-pub mod search;
-
 use anyhow::Result;
 use std::collections::HashMap;
 use std::fs::File;
@@ -93,18 +91,6 @@ pub struct IndexIo {
     doc_count: u32,
     avg_doc_len: f32,
     doc_lengths: Vec<u32>,
-}
-
-#[derive(Debug, Clone)]
-pub struct Posting {
-    pub doc_id: u32,
-    pub locations: Vec<u64>,
-}
-
-#[derive(Debug, Clone)]
-pub struct SearchResult {
-    pub word: String,
-    pub postings: Vec<Posting>,
 }
 
 pub type GlobalIndex = HashMap<String, Vec<(usize, Vec<usize>)>>;
@@ -303,11 +289,11 @@ impl IndexIo {
         u64::from_le_bytes(data[offset..offset + 8].try_into().unwrap())
     }
 
-    pub(crate) fn read_u32_chunk(&self, chunk_id: u8, offset: usize) -> u32 {
+    pub fn read_u32_chunk(&self, chunk_id: u8, offset: usize) -> u32 {
         Self::read_u32_at(&self.chunks[chunk_id as usize], offset)
     }
 
-    pub(crate) fn read_u64_chunk(&self, chunk_id: u8, offset: usize) -> u64 {
+    pub fn read_u64_chunk(&self, chunk_id: u8, offset: usize) -> u64 {
         Self::read_u64_at(&self.chunks[chunk_id as usize], offset)
     }
 
@@ -326,7 +312,7 @@ impl IndexIo {
         self.avg_doc_len
     }
 
-    pub(crate) fn doc_len(&self, doc_id: u32) -> u32 {
+    pub fn doc_len(&self, doc_id: u32) -> u32 {
         self.doc_lengths.get(doc_id as usize).copied().unwrap_or(0)
     }
 
@@ -350,7 +336,7 @@ impl IndexIo {
         .ok()
     }
 
-    pub(crate) fn get_vocab_entry(&self, idx: usize) -> VocabEntry {
+    pub fn get_vocab_entry(&self, idx: usize) -> VocabEntry {
         let start = HEADER_SIZE + idx * VOCAB_ENTRY_SIZE;
         let d = &self.vocab;
         VocabEntry {
@@ -365,7 +351,7 @@ impl IndexIo {
         }
     }
 
-    pub(crate) fn get_word_bytes(&self, idx: usize) -> &[u8] {
+    pub fn get_word_bytes(&self, idx: usize) -> &[u8] {
         let entry = self.get_vocab_entry(idx);
         let start = entry.word_offset as usize;
         &self.vocab[start..start + entry.word_len as usize]
@@ -376,8 +362,4 @@ impl IndexIo {
         String::from_utf8_lossy(self.get_word_bytes(idx)).to_string()
     }
 
-    #[must_use]
-    pub fn into_search_index(self) -> search::SearchIndex {
-        search::SearchIndex::new(self)
-    }
 }

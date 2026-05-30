@@ -1,4 +1,4 @@
-use crate::{IndexIo, Posting, SearchResult};
+use index_io::IndexIo;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 
@@ -9,16 +9,28 @@ const LOCATION_SIZE: usize = 8;
 const K1: f32 = 1.2;
 const B: f32 = 0.75;
 
-/// Search index providing fast word lookups via binary search.
-#[derive(Debug)]
-pub struct SearchIndex {
-    index: IndexIo,
+#[derive(Debug, Clone)]
+pub struct Posting {
+    pub doc_id: u32,
+    pub locations: Vec<u64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SearchResult {
+    pub word: String,
+    pub postings: Vec<Posting>,
 }
 
 #[derive(Debug, Clone)]
 pub struct ScoredDoc {
     pub doc_id: u32,
     pub score: f32,
+}
+
+/// Search index providing fast word lookups via binary search.
+#[derive(Debug)]
+pub struct SearchIndex {
+    index: IndexIo,
 }
 
 impl SearchIndex {
@@ -75,7 +87,6 @@ impl SearchIndex {
         ranked
     }
 
-    /// Uses O(1) direct offset lookup instead of scanning previous entries.
     fn get_postings(&self, idx: usize) -> SearchResult {
         let entry = self.index.get_vocab_entry(idx);
         let chunk_id = entry.chunk_id;

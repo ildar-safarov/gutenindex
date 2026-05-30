@@ -1,5 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
+use search::SearchIndex;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -20,7 +21,7 @@ struct Cli {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    let idx = index_io::IndexIo::open(&cli.index)?.into_search_index();
+    let idx = SearchIndex::new(index_io::IndexIo::open(&cli.index)?);
 
     match (cli.word, cli.query) {
         (Some(word), _) => {
