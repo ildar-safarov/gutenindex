@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import subprocess
 import sys
+from pathlib import Path
 
 REPO = "ildar-safarov/gutenindex"
 CORPUS_TAG = "corpus-v1"
@@ -45,6 +46,8 @@ def gh_url(tag, filename):
 def main():
     if len(sys.argv) != 2:
         sys.exit(f"usage: {sys.argv[0]} <host-ip>")
+    if not Path("Cargo.toml").exists():
+        sys.exit("error: run from repo root")
     host = sys.argv[1]
 
     print("==> 1/6  build x86_64 Linux binary")
@@ -56,8 +59,8 @@ def main():
     sh(["cargo", "zigbuild", "--target", "x86_64-unknown-linux-gnu.2.17", "--release", "-p", "web"])
 
     print("==> 2/6  upload binary")
-    scp(host, "target/x86_64-unknown-linux-gnu/release/web", BINARY)
-    ssh(host, f"chmod +x {BINARY}")
+    scp(host, "target/x86_64-unknown-linux-gnu/release/web", BINARY + ".new")
+    ssh(host, f"mv {BINARY}.new {BINARY}")
 
     print("==> 3/6  install packages")
     ssh(host, "apt-get update -qq && apt-get install -y -q supervisor curl")
