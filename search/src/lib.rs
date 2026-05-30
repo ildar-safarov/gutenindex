@@ -24,6 +24,7 @@ impl SearchIndex {
 
     #[must_use]
     pub fn search(&self, word: &str) -> Option<WordPostings> {
+        let word = word.to_lowercase();
         let mut left = 0;
         let mut right = self.index.word_count();
 
@@ -32,7 +33,7 @@ impl SearchIndex {
             let word_bytes = self.index.get_word_bytes(mid);
             let mid_word = std::str::from_utf8(word_bytes).ok()?;
 
-            match mid_word.cmp(word) {
+            match mid_word.cmp(&word) {
                 Ordering::Equal => return Some(self.index.get_postings(mid)),
                 Ordering::Less => left = mid + 1,
                 Ordering::Greater => right = mid,

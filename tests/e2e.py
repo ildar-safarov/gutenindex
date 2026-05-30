@@ -19,7 +19,7 @@ def run(*args, **kwargs):
 
 
 def phrase_found(phrase, doc_id, index_path):
-    words = phrase.lower().split()
+    words = phrase.split()
     locs_per_word = []
     for word in words:
         data = json.loads(run(str(SEARCH_CLI), "--index", str(index_path), "--word", word))
