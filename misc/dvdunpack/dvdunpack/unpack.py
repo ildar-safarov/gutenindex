@@ -12,10 +12,10 @@ from typing import Dict, List
 from tqdm import tqdm
 
 
-def process_one_file(docs_pg_root: Path, zip_to_doc_id: Dict[Path, int], zip_path: Path) -> None:
+def process_one_file(output_dir: Path, zip_to_doc_id: Dict[Path, int], zip_path: Path) -> None:
     doc_id = zip_to_doc_id[zip_path]
 
-    dst_path = docs_pg_root / "doc_files" / str(doc_id % 10) / f"{doc_id}.txt"
+    dst_path = output_dir / "doc_files" / str(doc_id % 10) / f"{doc_id}.txt"
     if dst_path.exists():
         return
 
@@ -45,18 +45,18 @@ def process_one_file(docs_pg_root: Path, zip_to_doc_id: Dict[Path, int], zip_pat
 
 def main():
     parser = argparse.ArgumentParser(description="Unpack Project Gutenberg ZIP files into text files")
-    parser.add_argument("pg_raw_root", type=Path, help="Directory containing raw Gutenberg ZIP files")
-    parser.add_argument("docs_pg_root", type=Path, help="Output directory for extracted text files")
+    parser.add_argument("dvd_root", type=Path, help="Root directory of the Gutenberg DVD")
+    parser.add_argument("output_dir", type=Path, help="Output directory for extracted text files")
     args = parser.parse_args()
 
-    pg_raw_root: Path = args.pg_raw_root
-    docs_pg_root: Path = args.docs_pg_root
+    dvd_root: Path = args.dvd_root
+    output_dir: Path = args.output_dir
 
-    doc_id_to_orig_path_json = docs_pg_root / "doc_id_to_orig_path.json"
+    doc_id_to_orig_path_json = output_dir / "doc_id_to_orig_path.json"
 
     if not doc_id_to_orig_path_json.exists():
         zips: List[Path] = []
-        for root, _, files in os.walk(pg_raw_root):
+        for root, _, files in os.walk(dvd_root):
             for f in files:
                 if f.endswith(".zip"):
                     zips.append(Path(root) / f)
@@ -68,7 +68,7 @@ def main():
 
         orig_paths: Dict[int, str] = dict()
         for z in zips:
-            orig_paths[zip_to_doc_id[z]] = "/".join(z.parts[len(pg_raw_root.parts):])
+            orig_paths[zip_to_doc_id[z]] = "/".join(z.parts[len(dvd_root.parts):])
 
         os.makedirs(doc_id_to_orig_path_json.parent, exist_ok=True)
         with open(doc_id_to_orig_path_json, "w") as f:
@@ -80,12 +80,12 @@ def main():
         zips = []
         zip_to_doc_id = dict()
         for doc_id, relative_path in orig_paths.items():
-            zip_path = pg_raw_root / relative_path
+            zip_path = dvd_root / relative_path
             zips.append(zip_path)
             zip_to_doc_id[zip_path] = doc_id
 
     with mp.Pool() as pool:
-        for _ in tqdm(pool.imap(partial(process_one_file, docs_pg_root, zip_to_doc_id), zips), total=len(zips)):
+        for _ in tqdm(pool.imap(partial(process_one_file, output_dir, zip_to_doc_id), zips), total=len(zips)):
             pass
 
 
