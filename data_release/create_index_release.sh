@@ -9,7 +9,7 @@ INDEX_DIR="${1:?usage: $0 <index_dir>}"
 gh release create "$TAG" \
     --repo "$REPO" \
     --title "Gutenindex search index" \
-    --notes "Gutenberg books search index"
+    --notes "Binary inverted index for the Project Gutenberg books."
 
 gh release upload "$TAG" \
     "$INDEX_DIR/vocab" \

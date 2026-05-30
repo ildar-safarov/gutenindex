@@ -55,7 +55,7 @@ const MAGIC: u32 = 0x49584442;
 const VERSION: u16 = 3;
 const CHUNK_COUNT: u8 = 8;
 
-const HEADER_SIZE: usize = 4 + 2 + 4 + 1 + 4 + 4; // 19
+const HEADER_SIZE: usize = 4 + 2 + 4 + 1 + 4 + 4;
 
 const WORD_OFFSET_SIZE: usize = 8;
 const WORD_LEN_SIZE: usize = 4;
@@ -69,6 +69,18 @@ const DOC_ID_SIZE: usize = 4;
 const LOC_COUNT_SIZE: usize = 4;
 const LOCATION_SIZE: usize = 8;
 
+#[derive(Debug, Clone)]
+pub struct Posting {
+    pub doc_id: u32,
+    pub locations: Vec<u64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct WordPostings {
+    pub word: String,
+    pub postings: Vec<Posting>,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct VocabEntry {
     pub word_offset: u64,
@@ -78,7 +90,6 @@ pub struct VocabEntry {
     pub posting_offset: u64,
 }
 
-/// Memory-mapped index reader.
 #[derive(Debug)]
 pub struct IndexIo {
     vocab: memmap2::Mmap,
@@ -362,4 +373,27 @@ impl IndexIo {
         String::from_utf8_lossy(self.get_word_bytes(idx)).to_string()
     }
 
+    pub fn get_postings(&self, idx: usize) -> WordPostings {
+        let entry = self.get_vocab_entry(idx);
+        let chunk_id = entry.chunk_id;
+        let mut offset = entry.posting_offset as usize;
+
+        let mut postings = Vec::with_capacity(entry.posting_count as usize);
+
+        for _ in 0..entry.posting_count {
+            let doc_id = self.read_u32_chunk(chunk_id, offset);
+            let loc_count = self.read_u32_chunk(chunk_id, offset + DOC_ID_SIZE) as usize;
+            offset += DOC_ID_SIZE + LOC_COUNT_SIZE;
+
+            let mut locations = Vec::with_capacity(loc_count);
+            for _ in 0..loc_count {
+                locations.push(self.read_u64_chunk(chunk_id, offset));
+                offset += LOCATION_SIZE;
+            }
+
+            postings.push(Posting { doc_id, locations });
+        }
+
+        WordPostings { word: self.get_word(idx), postings }
+    }
 }

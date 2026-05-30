@@ -1,25 +1,10 @@
 use index_io::IndexIo;
+pub use index_io::{Posting, WordPostings};
 use std::cmp::Ordering;
 use std::collections::HashMap;
 
-const DOC_ID_SIZE: usize = 4;
-const LOC_COUNT_SIZE: usize = 4;
-const LOCATION_SIZE: usize = 8;
-
 const K1: f32 = 1.2;
 const B: f32 = 0.75;
-
-#[derive(Debug, Clone)]
-pub struct Posting {
-    pub doc_id: u32,
-    pub locations: Vec<u64>,
-}
-
-#[derive(Debug, Clone)]
-pub struct SearchResult {
-    pub word: String,
-    pub postings: Vec<Posting>,
-}
 
 #[derive(Debug, Clone)]
 pub struct ScoredDoc {
@@ -27,7 +12,6 @@ pub struct ScoredDoc {
     pub score: f32,
 }
 
-/// Search index providing fast word lookups via binary search.
 #[derive(Debug)]
 pub struct SearchIndex {
     index: IndexIo,
@@ -38,9 +22,8 @@ impl SearchIndex {
         Self { index }
     }
 
-    /// Returns `Some(SearchResult)` if found, `None` otherwise.
     #[must_use]
-    pub fn search(&self, word: &str) -> Option<SearchResult> {
+    pub fn search(&self, word: &str) -> Option<WordPostings> {
         let mut left = 0;
         let mut right = self.index.word_count();
 
@@ -50,7 +33,7 @@ impl SearchIndex {
             let mid_word = std::str::from_utf8(word_bytes).ok()?;
 
             match mid_word.cmp(word) {
-                Ordering::Equal => return Some(self.get_postings(mid)),
+                Ordering::Equal => return Some(self.index.get_postings(mid)),
                 Ordering::Less => left = mid + 1,
                 Ordering::Greater => right = mid,
             }
@@ -59,7 +42,6 @@ impl SearchIndex {
         None
     }
 
-    /// BM25 ranking over one or more query terms. Returns docs sorted by score descending.
     pub fn bm25_search(&self, terms: &[&str]) -> Vec<ScoredDoc> {
         let n = self.index.doc_count() as f32;
         let avgdl = self.index.avg_doc_len();
@@ -85,31 +67,6 @@ impl SearchIndex {
             .collect();
         ranked.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(Ordering::Equal));
         ranked
-    }
-
-    fn get_postings(&self, idx: usize) -> SearchResult {
-        let entry = self.index.get_vocab_entry(idx);
-        let chunk_id = entry.chunk_id;
-        let mut offset = entry.posting_offset as usize;
-
-        let mut postings = Vec::with_capacity(entry.posting_count as usize);
-
-        for _ in 0..entry.posting_count {
-            let doc_id = self.index.read_u32_chunk(chunk_id, offset);
-            let loc_count = self.index.read_u32_chunk(chunk_id, offset + DOC_ID_SIZE) as usize;
-            offset += DOC_ID_SIZE + LOC_COUNT_SIZE;
-
-            let mut locations = Vec::with_capacity(loc_count);
-            for _ in 0..loc_count {
-                locations.push(self.index.read_u64_chunk(chunk_id, offset));
-                offset += LOCATION_SIZE;
-            }
-
-            postings.push(Posting { doc_id, locations });
-        }
-
-        let word = self.index.get_word(idx);
-        SearchResult { word, postings }
     }
 
     pub fn doc_title(&self, doc_id: u32) -> Option<&str> {
