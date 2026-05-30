@@ -2,9 +2,9 @@
 members = [
     "index_io",
     "search",
-    "indexer/rust/indexer",
-    "indexer/rust/indexer-cli",
-    "indexer/rust/tools",
+    "indexer/indexer",
+    "indexer/indexer-cli",
+    "indexer/tools",
     "search-cli",
     "web",
 ]
@@ -25,5 +25,5 @@ walkdir = "2.5"
 
 index_io = { path = "index_io" }
 search = { path = "search" }
-indexer = { path = "indexer/rust/indexer" }
-tools = { path = "indexer/rust/tools" }
+indexer = { path = "indexer/indexer" }
+tools = { path = "indexer/tools" }
